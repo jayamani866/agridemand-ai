@@ -1,4 +1,4 @@
-﻿import { useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import {
   Sprout, LayoutDashboard, Users, Package, ShoppingCart,
   BrainCircuit, Wallet, Settings, Bell, Search, ArrowUpRight,
@@ -6,6 +6,13 @@ import {
   X, CalendarDays, Plus, Filter, Clock3,
   CheckCircle2, Truck, BarChart3, ImageOff
 } from 'lucide-react'
+
+import {
+  getFarmers,
+  getLots,
+  getBuyerRequests,
+} from './services/api'
+
 import { useTheme } from './context/useTheme'
 import './App.css'
 const menu = [
@@ -76,12 +83,43 @@ const crops = [
     harvest: 'Recently harvested',
   },
 ]
-const metrics = [
-  { label: 'Registered farmers', value: '3', note: 'Demo farmer accounts', icon: Users, trend: 'Supply network' },
-  { label: 'Available produce', value: '3,200 kg', note: 'Across active sample lots', icon: Package, trend: 'Inventory' },
-  { label: 'Buyer requests', value: '1', note: 'Procurement demand', icon: ShoppingCart, trend: 'Demand' },
-  { label: 'Orders created', value: '1', note: 'Awaiting payment', icon: Wallet, trend: 'Procurement' },
-]
+// const availableStock = lots.reduce(
+//   (total, lot) => total + Number(lot.available_kg || 0),
+//   0
+// )
+
+// const metrics = [
+//   {
+//     label: 'Registered farmers',
+//     value: loading ? '...' : String(farmers.length),
+//     note: 'Registered farmer accounts',
+//     icon: Users,
+//     trend: 'Supply network',
+//   },
+//   {
+//     label: 'Available produce',
+//     value: loading
+//       ? '...'
+//       : `${availableStock.toLocaleString('en-IN')} kg`,
+//     note: 'Across available lots',
+//     icon: Package,
+//     trend: 'Inventory',
+//   },
+//   {
+//     label: 'Buyer requests',
+//     value: loading ? '...' : String(buyerRequests.length),
+//     note: 'Procurement demand',
+//     icon: ShoppingCart,
+//     trend: 'Demand',
+//   },
+//   {
+//     label: 'Orders created',
+//     value: '—',
+//     note: 'Orders API not connected yet',
+//     icon: Wallet,
+//     trend: 'Procurement',
+//   },
+// ]
 function CropImage({ crop, className = '' }) {
   const [failed, setFailed] = useState(false)
   return (
@@ -123,6 +161,92 @@ function App() {
   const filteredCrops = crops.filter((crop) =>
     `${crop.crop} ${crop.location} ${crop.variety}`.toLowerCase().includes(search.toLowerCase())
   )
+  const [farmers, setFarmers] = useState([])
+  const [lots, setLots] = useState([])
+  const [buyerRequests, setBuyerRequests] = useState([])
+
+  const [loading, setLoading] = useState(true)
+  const [apiError, setApiError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadDashboard() {
+      try {
+        setLoading(true)
+
+        const [farmerData, lotData, requestData] =
+          await Promise.all([
+            getFarmers(),
+            getLots(),
+            getBuyerRequests(),
+          ])
+
+        if (!cancelled) {
+          setFarmers(farmerData)
+          setLots(lotData)
+          setBuyerRequests(requestData)
+          setApiError('')
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setApiError(error.message)
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false)
+        }
+      }
+    }
+
+    loadDashboard()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+      const availableStock = lots.reduce(
+      (total, lot) => total + Number(lot.available_kg || 0),
+      0
+    )
+
+    const metrics = [
+      {
+        label: 'Registered farmers',
+        value: loading ? '...' : String(farmers.length),
+        note: 'Registered farmer accounts',
+        icon: Users,
+        trend: 'Supply network',
+      },
+      {
+        label: 'Available produce',
+        value: loading
+          ? '...'
+          : `${availableStock.toLocaleString('en-IN')} kg`,
+        note: 'Across available lots',
+        icon: Package,
+        trend: 'Inventory',
+      },
+      {
+        label: 'Buyer requests',
+        value: loading ? '...' : String(buyerRequests.length),
+        note: 'Procurement demand',
+        icon: ShoppingCart,
+        trend: 'Demand',
+      },
+      {
+        label: 'Orders created',
+        value: '—',
+        note: 'Orders API not connected yet',
+        icon: Wallet,
+        trend: 'Procurement',
+      },
+    ]
+
+
+
+  //dynamic  metrics block goes here 
   return (
     <div className="app-shell">
       {mobileMenu && <button className="mobile-overlay" onClick={() => setMobileMenu(false)} aria-label="Close navigation" />}
@@ -192,6 +316,17 @@ function App() {
           </div>
         </header>
         <div className="page-content">
+          {apiError && (
+            <div role="alert" style={{
+              padding: '12px 16px',
+              marginBottom: '16px',
+              borderRadius: '8px',
+              background: '#7f1d1d',
+              color: '#ffffff',
+            }}>
+              Backend connection failed: {apiError}
+            </div>
+          )}
           {selectedCrop ? (
             <section className="crop-detail-page">
               <button className="back-link" onClick={() => setSelectedCrop(null)}>← Back to inventory</button>
