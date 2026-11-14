@@ -14,6 +14,9 @@ class FarmerCreate(BaseModel):
     phone: str = Field(min_length=8, max_length=20)
     location: str = Field(min_length=2, max_length=120)
 
+class FarmerOnboarding(BaseModel):
+    phone: str = Field(min_length=8, max_length=20)
+    location: str = Field(min_length=2, max_length=120)
 
 class FarmerOut(FarmerCreate):
     id: int
@@ -28,7 +31,13 @@ class LotCreate(BaseModel):
     price_per_kg: float = Field(gt=0)
     location: str
 
-
+class FarmerLotCreate(BaseModel):
+    crop: str
+    quantity_kg: float = Field(gt=0)
+    grade: str = "A"
+    price_per_kg: float = Field(gt=0)
+    location: str = Field(min_length=2, max_length=120)
+    
 class LotOut(BaseModel):
     id: int
     farmer_id: int
@@ -84,3 +93,29 @@ class OrderOut(BaseModel):
     items: list[OrderItemOut]
 
     model_config = ConfigDict(from_attributes=True)
+
+class OrderOut(BaseModel):
+    id: int
+    request_id: int
+    total_amount: float
+    currency: str
+    status: str
+    created_at: datetime
+    items: list[OrderItemOut]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+
+class OrderItemDetailOut(OrderItemOut):
+    farmer_name: str
+    farmer_location: str
+
+
+class OrderListOut(OrderOut):
+    buyer_name: str
+    crop: str
+    requested_quantity_kg: float
+    delivery_location: str
+    items: list[OrderItemDetailOut]
+

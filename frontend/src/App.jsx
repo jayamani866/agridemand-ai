@@ -4,7 +4,7 @@ import {
   BrainCircuit, Wallet, Settings, Bell, Search, ArrowUpRight,
   TrendingUp, MapPin, Leaf, ChevronRight, Menu, Sun, Moon,
   X, CalendarDays, Plus, Filter, Clock3,
-  CheckCircle2, Truck, BarChart3, ImageOff
+  CheckCircle2, BarChart3, ImageOff
 } from 'lucide-react'
 
 import {
@@ -12,7 +12,13 @@ import {
   getLots,
   getBuyerRequests,
 } from './services/api'
-
+import BuyerRequests from './admin/pages/BuyerRequests'
+import AIMatching from './admin/pages/AIMatching'
+import Orders from './admin/pages/Orders';
+import Farmers from './admin/pages/Farmers';
+import MarketIntelligence from './admin/pages/MarketIntelligence';
+import Reports from './admin/pages/Reports';
+import AdminSettings from './admin/pages/Settings';
 import { useTheme } from './context/useTheme'
 import './App.css'
 const menu = [
@@ -158,9 +164,9 @@ function App() {
     setSelectedCrop(null)
     setMobileMenu(false)
   }
-  const filteredCrops = crops.filter((crop) =>
-    `${crop.crop} ${crop.location} ${crop.variety}`.toLowerCase().includes(search.toLowerCase())
-  )
+  // const filteredCrops = crops.filter((crop) =>
+  //   `${crop.crop} ${crop.location} ${crop.variety}`.toLowerCase().includes(search.toLowerCase())
+  // )
   const [farmers, setFarmers] = useState([])
   const [lots, setLots] = useState([])
   const [buyerRequests, setBuyerRequests] = useState([])
@@ -243,6 +249,43 @@ function App() {
         trend: 'Procurement',
       },
     ]
+
+  const farmerById = new Map(
+      farmers.map((farmer) => [farmer.id, farmer])
+    )
+
+    const inventoryCrops = lots
+      .filter((lot) => Number(lot.available_kg) > 0)
+      .map((lot) => {
+        const cropName = String(lot.crop || '')
+        const cropInfo = crops.find(
+          (crop) => crop.crop.toLowerCase() === cropName.toLowerCase()
+        )
+
+        const farmer = farmerById.get(lot.farmer_id)
+
+        return {
+          id: lot.id,
+          crop: cropName,
+          variety: `${cropName} · Grade ${lot.grade}`,
+          location: lot.location,
+          quantity: `${Number(lot.available_kg).toLocaleString('en-IN')} kg`,
+          price: `₹${lot.price_per_kg}`,
+          unit: '/ kg',
+          status: lot.status,
+          color: cropInfo?.color || '#22a06b',
+          image: cropInfo?.image || '',
+          description: `Available ${cropName} produce from ${farmer?.name || 'Registered farmer'}.`,
+          farmer: farmer?.name || 'Unknown farmer',
+          harvest: 'Harvest date from backend',
+        }
+      })
+
+    const filteredInventoryCrops = inventoryCrops.filter((crop) =>
+      `${crop.crop} ${crop.location} ${crop.variety} ${crop.farmer}`
+        .toLowerCase()
+        .includes(search.toLowerCase())
+    )
 
 
 
@@ -406,7 +449,7 @@ function App() {
                 </div>
                 <div className="crop-grid">
                   {crops.slice(0, 3).map((crop) => (
-                    <button className="crop-card" key={crop.crop} onClick={() => setSelectedCrop(crop)}>
+                    <button className="crop-card" key={crop.id} onClick={() => setSelectedCrop(crop)}>
                       <CropImage crop={crop} />
                       <div className="crop-card-body">
                         <div className="crop-card-title"><div><h3>{crop.crop}</h3><p>{crop.variety}</p></div><ArrowUpRight size={17} /></div>
@@ -424,32 +467,63 @@ function App() {
                 <div><div className="eyebrow"><span className="eyebrow-dot" /> SUPPLY MANAGEMENT</div><h1>Farmer <span>inventory.</span></h1><p>Explore available crops and their sample stock details.</p></div>
                 <button className="primary-button" onClick={() => goTo('Buyer Requests')}><Plus size={18} /> Create demand</button>
               </div>
-              <div className="inventory-toolbar"><div><strong>{filteredCrops.length} produce categories</strong><span> Sample inventory</span></div><button className="outline-button"><Filter size={15} /> Filters</button></div>
+              <div className="inventory-toolbar"><div><strong>{filteredInventoryCrops.length} available lots</strong><span> Sample inventory</span></div><button className="outline-button"><Filter size={15} /> Filters</button></div>
               <div className="crop-grid inventory-crop-grid">
-                {filteredCrops.map((crop) => (
-                  <button className="crop-card" key={crop.crop} onClick={() => setSelectedCrop(crop)}>
-                    <CropImage crop={crop} />
-                    <div className="crop-card-body">
-                      <div className="crop-card-title"><div><h3>{crop.crop}</h3><p>{crop.variety}</p></div><ArrowUpRight size={17} /></div>
-                      <div className="crop-card-meta"><span><MapPin size={13} /> {crop.location.split(',')[0]}</span><span className="available-dot">Available</span></div>
-                      <div className="crop-card-bottom"><strong>{crop.quantity}</strong><span>{crop.price}<small> / kg</small></span></div>
-                      <div className="crop-view-hint">View produce details <ChevronRight size={14} /></div>
+                
+                {filteredInventoryCrops.length === 0 && (
+                  <div className="empty-state">
+                    No produce matches “{search}”. Try another search.
+                  </div>
+                )}
+                </div>
+                </section>
+                ) : active === 'Buyer Requests' ? (
+                  <BuyerRequests />
+                ) : active === 'AI Matching' ? (
+                  <AIMatching />
+                ) : active === 'Orders' ? (
+                  <Orders />
+                ) : active === 'Farmers' ? (
+                  <Farmers />
+                ) : active === 'Market Intelligence' ? (
+                  <MarketIntelligence />
+                ) : active === 'Reports' ? (
+                  <Reports />
+                ) : active === 'Settings' ? (
+                  <AdminSettings />
+                ) : (
+                  <section className="coming-page">
+                    <div className="coming-icon">
+                      {active === 'Farmers' ? (
+                        <Users size={30} />
+                      ) : active === 'Settings' ? (
+                        <Settings size={30} />
+                      ) : (
+                        <BarChart3 size={30} />
+                      )}
                     </div>
-                  </button>
-                ))}
-                {filteredCrops.length === 0 && <div className="empty-state">No produce matches “{search}”. Try another search.</div>}
-              </div>
-            </section>
-          ) : (
-            <section className="coming-page">
-              <div className="coming-icon">{active === 'AI Matching' ? <BrainCircuit size={30} /> : active === 'Orders' ? <Truck size={30} /> : active === 'Buyer Requests' ? <ShoppingCart size={30} /> : active === 'Farmers' ? <Users size={30} /> : active === 'Settings' ? <Settings size={30} /> : <BarChart3 size={30} />}</div>
-              <div className="eyebrow"><span className="eyebrow-dot" /> AGRIDEMAND AI WORKSPACE</div>
-              <h1>{active}</h1>
-              <p>This workspace is being connected to the live AgriDemand AI backend. The next milestone is to make this workflow fully interactive and data-driven.</p>
-              <div className="coming-status"><span /> UI foundation ready <span className="coming-separator">·</span> Backend integration pending</div>
-              <button className="outline-button" onClick={() => goTo('Overview')}>Return to overview <ArrowUpRight size={15} /></button>
-            </section>
-          )}
+
+                    <div className="eyebrow">
+                      <span className="eyebrow-dot" /> AGRIDEMAND AI WORKSPACE
+                    </div>
+
+                    <h1>{active}</h1>
+                    <p>
+                      This workspace is being connected to the live AgriDemand AI backend.
+                      The next milestone is to make this workflow fully interactive and data-driven.
+                    </p>
+
+                    <div className="coming-status">
+                      <span className="eyebrow-dot" /> UI foundation ready
+                      <span>·</span> Backend integration pending
+                    </div>
+
+                    <button className="outline-button" onClick={() => goTo('Overview')}>
+                      Return to overview <ArrowUpRight size={15} />
+                    </button>
+                  </section>
+                )}
+
           <footer className="app-footer"><span>© 2026 AgriDemand AI <i /> Intelligent agricultural procurement</span><span><span className="footer-live-dot" /> Hackathon demo environment</span></footer>
         </div>
       </main>
