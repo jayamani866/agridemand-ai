@@ -6,7 +6,7 @@ import {
   ArrowRight, Loader2, Tractor, ShoppingBag, Truck,
   ShieldCheck, TrendingUp, Leaf, CheckCircle2,
 } from 'lucide-react'
-import { useAuth } from './AuthContext'
+import { useAuth } from './useAuth'
 import './Auth.css'
 
 const roles = [
@@ -316,3 +316,4 @@ export default function Signup() {
     </main>
   )
 }
+

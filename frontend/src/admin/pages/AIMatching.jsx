@@ -4,7 +4,6 @@ import {
   RefreshCw,
   Package,
   MapPin,
-  TrendingUp,
   AlertCircle,
   CheckCircle2,
   Search,
@@ -66,12 +65,9 @@ export default function AIMatching() {
   const [search, setSearch] = useState('');
   const [lastCalculated, setLastCalculated] = useState(null);
 
+  
+  
   const loadRequests = useCallback(async () => {
-    setLoadingRequests(true);
-    setError('');
-    setResult(null);
-    setLastCalculated(null);
-
     try {
       const data = await getBuyerRequests();
       const safeRequests = Array.isArray(data) ? data : [];
@@ -82,6 +78,7 @@ export default function AIMatching() {
         if (safeRequests.some((item) => String(item.id) === String(previous))) {
           return previous;
         }
+
         return safeRequests.length ? String(safeRequests[0].id) : '';
       });
     } catch (err) {
@@ -94,8 +91,92 @@ export default function AIMatching() {
   }, []);
 
   useEffect(() => {
+    let active = true;
+
+    getBuyerRequests()
+      .then((data) => {
+        if (!active) return;
+
+        const safeRequests = Array.isArray(data) ? data : [];
+
+        setRequests(safeRequests);
+
+        setSelectedRequestId((previous) => {
+          if (safeRequests.some((item) => String(item.id) === String(previous))) {
+            return previous;
+          }
+
+          return safeRequests.length ? String(safeRequests[0].id) : '';
+        });
+      })
+      .catch((err) => {
+        if (!active) return;
+
+        setError(err.message || 'Unable to load buyer requests.');
+        setRequests([]);
+        setSelectedRequestId('');
+      })
+      .finally(() => {
+        if (active) {
+          setLoadingRequests(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+
+
+  
+  useEffect(() => {
+    let active = true;
+
+    getBuyerRequests()
+      .then((data) => {
+        if (!active) return;
+
+        const safeRequests = Array.isArray(data) ? data : [];
+
+        setRequests(safeRequests);
+
+        setSelectedRequestId((previous) => {
+          if (safeRequests.some((item) => String(item.id) === String(previous))) {
+            return previous;
+          }
+
+          return safeRequests.length ? String(safeRequests[0].id) : '';
+        });
+      })
+      .catch((err) => {
+        if (!active) return;
+
+        setError(err.message || 'Unable to load buyer requests.');
+        setRequests([]);
+        setSelectedRequestId('');
+      })
+      .finally(() => {
+        if (active) {
+          setLoadingRequests(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+
+
+  const handleRefresh = () => {
+    setLoadingRequests(true);
+    setError('');
+    setResult(null);
+    setLastCalculated(null);
     loadRequests();
-  }, [loadRequests]);
+  };
+
 
   const selectedRequest = useMemo(
     () => requests.find(
@@ -180,7 +261,7 @@ export default function AIMatching() {
 
         <button
           className="aim-refresh"
-          onClick={loadRequests}
+          onClick={handleRefresh}
           disabled={loadingRequests || matching}
         >
           <RefreshCw

@@ -1,6 +1,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useAuth } from './AuthContext';
+import { useAuth } from './useAuth';
 import BulkBuyerDashboard from './BulkBuyerDashboard';
 const API = 'http://127.0.0.1:8002';
 const CROPS = [
@@ -143,10 +143,14 @@ export default function RoleDashboard() {
   }, [request]);
 
   useEffect(() => {
-    if (user?.role === 'farmer' && activePage === 'orders') {
+    if (user?.role !== 'farmer' || activePage !== 'orders') return;
+
+    const timer = setTimeout(() => {
       loadRetailOrders();
       loadBulkOrders();
-    }
+    }, 0);
+
+    return () => clearTimeout(timer);
   }, [user, activePage, loadRetailOrders, loadBulkOrders]);
   const updateRetailOrderStatus = async (itemId, status) => {
     setUpdatingOrderId(itemId);
@@ -196,9 +200,7 @@ export default function RoleDashboard() {
   };
 
   const loadDashboard = useCallback(async () => {
-    setLoading(true);
-    setError('');
-
+    
     try {
       const farmer = await request('/api/farmers/me');
       setProfile(farmer);
@@ -234,8 +236,13 @@ export default function RoleDashboard() {
   }, [request]);
 
   useEffect(() => {
-    if (user?.role === 'farmer') loadDashboard();
-    else setLoading(false);
+    if (user?.role !== 'farmer') return;
+
+    const timer = setTimeout(() => {
+      loadDashboard();
+    }, 0);
+
+    return () => clearTimeout(timer);
   }, [user, loadDashboard]);
 
   const availableStock = useMemo(
@@ -597,7 +604,7 @@ export default function RoleDashboard() {
                         <EmptyState icon="⌁" title="No demand data yet" description="Buyer requirements will appear here when requests are submitted." />
                       ) : (
                         <div className="ag-demand-list">
-                          {demandByCrop.slice(0, 5).map(([crop, quantity], index) => {
+                          {demandByCrop.slice(0, 5).map(([crop, quantity]) => {
                             const max = demandByCrop[0][1] || 1;
                             return (
                               <div className="ag-demand-item" key={crop}>
@@ -1180,3 +1187,4 @@ const css = `
 @media(max-width:720px){.ag-sidebar{position:fixed;left:-270px;top:0;width:258px;transition:left .25s;box-shadow:12px 0 35px #07170d20}.ag-sidebar-open{left:0}.ag-mobile-backdrop{display:block;position:fixed;inset:0;background:#07170d70;border:0;z-index:19}.ag-close-menu{display:block;margin-left:auto;background:none;border:0;color:white;font-size:24px}.ag-menu-toggle{display:block;border:0;background:none;color:#36533e;font-size:20px;cursor:pointer}.ag-topbar{height:58px;padding:0 16px}.ag-content{padding:23px 15px}.ag-page-heading{align-items:flex-start;flex-direction:column}.ag-page-heading h1{font-size:23px}.ag-page-heading>.ag-btn{width:100%}.ag-welcome-banner{padding:20px}.ag-welcome-banner h2{font-size:18px}.ag-banner-illustration{font-size:38px;margin-right:0}.ag-stats-grid,.ag-stats-compact{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.ag-stat{padding:13px}.ag-stat strong{font-size:19px}.ag-panel{padding:14px}.ag-demand-grid{grid-template-columns:1fr}.ag-profile-layout{grid-template-columns:1fr}.ag-onboarding{grid-template-columns:1fr}.ag-onboard-visual{min-height:auto;padding:25px}.ag-onboard-art{font-size:42px;margin:10px 0}.ag-onboard-visual h2{font-size:21px}.ag-onboard-form{padding:24px}.ag-info-strip{align-items:flex-start;flex-wrap:wrap}.ag-info-strip button{margin-left:30px}.ag-footer{flex-direction:column}.ag-toolbar{flex-wrap:wrap}.ag-search{flex-basis:100%}}
 @media(max-width:390px){.ag-stats-grid,.ag-stats-compact{grid-template-columns:1fr}.ag-live{display:none}.ag-topbar{padding:0 12px}.ag-content{padding:18px 11px}}
 `;
+

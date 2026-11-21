@@ -5,7 +5,7 @@ import {
   ChevronRight, Leaf, Truck, ShieldCheck, CircleCheck, Clock3,
   Store, X, ArrowLeft, Menu
 } from 'lucide-react';
-import { useAuth } from './AuthContext';
+import { useAuth } from './useAuth';
 import './ConsumerDashboard.css';
 
 const API = 'http://127.0.0.1:8002';
@@ -54,7 +54,11 @@ export default function ConsumerDashboard() {
   const [busy, setBusy] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('pay_on_delivery');
   const paypalCaptureStarted = useRef(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState(() =>
+    new URLSearchParams(window.location.search).get('paypal') === 'cancel'
+      ? 'PayPal payment was cancelled.'
+      : ''
+  );
   const [notice, setNotice] = useState('');
   const [mobileMenu, setMobileMenu] = useState(false);
   const [address, setAddress] = useState({
@@ -119,26 +123,6 @@ export default function ConsumerDashboard() {
       setBusy(false);
     }
   }, [api]);
-  const loadSavedAddress = useCallback(async () => {
-    try {
-      setAddressLoading(true);
-      const saved = await api('/api/consumer/address');
-
-      if (saved) {
-        setAddress({
-          delivery_address: saved.delivery_address,
-          delivery_city: saved.delivery_city,
-          postal_code: saved.postal_code,
-          phone: saved.phone
-        });
-        setAddressSaved(true);
-      }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setAddressLoading(false);
-    }
-  }, [api]);
 
   const saveAddress = async () => {
     try {
@@ -166,17 +150,84 @@ export default function ConsumerDashboard() {
     }
   };
   useEffect(() => {
-    loadProducts();
-  }, [loadProducts]);
-  useEffect(() => {
-    if (page === 'checkout' || page === 'profile') {
-      loadSavedAddress();
+    let active = true;
+
+    async function fetchProducts() {
+      try {
+        const data = await api('/api/consumer/products');
+        if (active) {
+          setProducts(Array.isArray(data) ? data : []);
+        }
+      } catch (err) {
+        if (active) setError(err.message);
+      } finally {
+        if (active) setLoading(false);
+      }
     }
-  }, [page, loadSavedAddress]);
+
+    fetchProducts();
+
+    return () => {
+      active = false;
+    };
+  }, [api]);
 
   useEffect(() => {
-    if (page === 'orders') loadOrders();
-  }, [page, loadOrders]);
+    if (page !== 'checkout' && page !== 'profile') return;
+
+    let active = true;
+
+    async function fetchAddress() {
+      try {
+        const saved = await api('/api/consumer/address');
+
+        if (active && saved) {
+          setAddress({
+            delivery_address: saved.delivery_address,
+            delivery_city: saved.delivery_city,
+            postal_code: saved.postal_code,
+            phone: saved.phone
+          });
+          setAddressSaved(true);
+        }
+      } catch (err) {
+        if (active) setError(err.message);
+      } finally {
+        if (active) setAddressLoading(false);
+      }
+    }
+
+    fetchAddress();
+
+    return () => {
+      active = false;
+    };
+  }, [page, api]);
+
+  useEffect(() => {
+    if (page !== 'orders') return;
+
+    let active = true;
+
+    async function fetchOrders() {
+      try {
+        const data = await api('/api/consumer/orders');
+        if (active) {
+          setOrders(Array.isArray(data) ? data : []);
+        }
+      } catch (err) {
+        if (active) setError(err.message);
+      } finally {
+        if (active) setBusy(false);
+      }
+    }
+
+    fetchOrders();
+
+    return () => {
+      active = false;
+    };
+  }, [page, api]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -184,9 +235,8 @@ export default function ConsumerDashboard() {
     const paymentStatus = params.get('paypal');
 
     if (paymentStatus === 'cancel') {
-        setError('PayPal payment was cancelled.');
-        window.history.replaceState({}, '', window.location.pathname);
-        return;
+      window.history.replaceState({}, '', window.location.pathname);
+      return;
     }
 
     if (!paypalOrderId || paypalCaptureStarted.current) return;

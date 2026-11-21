@@ -5,7 +5,7 @@ import {
   Sprout, Mail, Lock, Eye, EyeOff,
   ArrowRight, Loader2
 } from 'lucide-react';
-import { useAuth } from './AuthContext';
+import { useAuth } from './useAuth';
 import './Auth.css';
 
 export default function Login() {
@@ -160,4 +160,5 @@ export default function Login() {
     </main>
   );
 }
+
 

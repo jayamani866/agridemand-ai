@@ -3,11 +3,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Sprout, LogOut, RefreshCw, Plus, Search, BrainCircuit,
   Package, MapPin, CheckCircle2, AlertCircle, Boxes,
-  IndianRupee, Truck, Leaf, ArrowUpRight, Clock3,
+  IndianRupee, Truck, ArrowUpRight, Clock3,
   ChevronRight, ShoppingBasket, ClipboardList, RotateCw,
-  CircleCheck, Timer, Warehouse, TrendingUp
+  Timer, Warehouse, TrendingUp
 } from 'lucide-react';
-import { useAuth } from './AuthContext';
+import { useAuth } from './useAuth';
 import { getMatchingResults } from '../shared/services/matchingApi';
 import './BulkBuyerDashboard.css';
 
@@ -90,9 +90,6 @@ export default function BulkBuyerDashboard() {
   }, []);
 
   const loadRequests = useCallback(async () => {
-    setLoading(true);
-    setError('');
-
     try {
       const data = await apiRequest('/api/requests');
       const ownRequests = Array.isArray(data) ? data : [];
@@ -114,9 +111,6 @@ export default function BulkBuyerDashboard() {
   }, [apiRequest]);
 
   const loadOrders = useCallback(async () => {
-    setOrdersLoading(true);
-    setError('');
-
     try {
       const data = await apiRequest('/api/orders');
       setOrders(Array.isArray(data) ? data : []);
@@ -128,14 +122,73 @@ export default function BulkBuyerDashboard() {
   }, [apiRequest]);
 
   useEffect(() => {
-    loadRequests();
-  }, [loadRequests]);
+    let active = true;
+
+    apiRequest('/api/requests')
+      .then((data) => {
+        if (!active) return;
+
+        const ownRequests = Array.isArray(data) ? data : [];
+
+        setRequests(ownRequests);
+
+        setSelectedId((old) =>
+          ownRequests.some((item) => String(item.id) === String(old))
+            ? old
+            : ownRequests.length
+              ? String(ownRequests[0].id)
+              : ''
+        );
+      })
+      .catch((err) => {
+        if (!active) return;
+        setError(err.message || 'Unable to load demands.');
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [apiRequest]);
 
   useEffect(() => {
-    if (activePage === 'orders') {
-      loadOrders();
-    }
-  }, [activePage, loadOrders]);
+    if (activePage !== 'orders') return;
+
+    let active = true;
+
+    apiRequest('/api/orders')
+      .then((data) => {
+        if (active) {
+          setOrders(Array.isArray(data) ? data : []);
+        }
+      })
+      .catch((err) => {
+        if (active) {
+          setError(err.message || 'Unable to load orders.');
+        }
+      })
+      .finally(() => {
+        if (active) setOrdersLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [activePage, apiRequest]);
+
+  const handleRefresh = () => {
+    setLoading(true);
+    setError('');
+    loadRequests();
+  };
+
+  const handleOrdersRefresh = () => {
+    setOrdersLoading(true);
+    setError('');
+    loadOrders();
+  };
 
   const selectedRequest = useMemo(
     () => requests.find((item) => String(item.id) === String(selectedId)) || null,
@@ -278,8 +331,11 @@ export default function BulkBuyerDashboard() {
     setActivePage(page);
     setError('');
     setNotice('');
-  }
 
+    if (page === 'orders') {
+      setOrdersLoading(true);
+    }
+  }
   const pageInfo = {
     demands: {
       eyebrow: 'PROCUREMENT MANAGEMENT',
@@ -378,7 +434,7 @@ export default function BulkBuyerDashboard() {
 
             <button
               className="bb-secondary-btn"
-              onClick={activePage === 'orders' ? loadOrders : loadRequests}
+              onClick={activePage === 'orders' ? handleOrdersRefresh : handleRefresh}
               disabled={loading || ordersLoading}
             >
               <RefreshCw
@@ -788,7 +844,7 @@ export default function BulkBuyerDashboard() {
                   </div>
                   <button
                     className="bb-secondary-btn"
-                    onClick={loadOrders}
+                    onClick={handleOrdersRefresh}
                     disabled={ordersLoading}
                   >
                     <RotateCw size={16} className={ordersLoading ? 'bb-spin' : ''} />
@@ -968,3 +1024,4 @@ export default function BulkBuyerDashboard() {
     </div>
   );
 }
+
