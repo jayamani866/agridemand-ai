@@ -8,7 +8,7 @@ import {
 import { useAuth } from './AuthContext';
 import './ConsumerDashboard.css';
 
-const API = 'http://127.0.0.1:8001';
+const API = 'http://127.0.0.1:8002';
 
 const money = value =>
   new Intl.NumberFormat('en-IN', {
@@ -45,6 +45,7 @@ export default function ConsumerDashboard() {
   const [page, setPage] = useState('shop');
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
+  const [trackingOrderId, setTrackingOrderId] = useState(null);
   const [cart, setCart] = useState({});
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('All');
@@ -62,6 +63,9 @@ export default function ConsumerDashboard() {
     postal_code: '',
     phone: ''
   });
+  const [addressSaved, setAddressSaved] = useState(false);
+  const [editingAddress, setEditingAddress] = useState(false);
+  const [addressLoading, setAddressLoading] = useState(false);
 
   const token = localStorage.getItem('agridemand_access_token');
 
@@ -115,10 +119,60 @@ export default function ConsumerDashboard() {
       setBusy(false);
     }
   }, [api]);
+  const loadSavedAddress = useCallback(async () => {
+    try {
+      setAddressLoading(true);
+      const saved = await api('/api/consumer/address');
 
+      if (saved) {
+        setAddress({
+          delivery_address: saved.delivery_address,
+          delivery_city: saved.delivery_city,
+          postal_code: saved.postal_code,
+          phone: saved.phone
+        });
+        setAddressSaved(true);
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAddressLoading(false);
+    }
+  }, [api]);
+
+  const saveAddress = async () => {
+    try {
+      setAddressLoading(true);
+
+      const saved = await api('/api/consumer/address', {
+        method: 'PUT',
+        body: JSON.stringify(address)
+      });
+
+      setAddress({
+        delivery_address: saved.delivery_address,
+        delivery_city: saved.delivery_city,
+        postal_code: saved.postal_code,
+        phone: saved.phone
+      });
+
+      setAddressSaved(true);
+      setEditingAddress(false);
+      setNotice('Delivery address saved successfully.');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAddressLoading(false);
+    }
+  };
   useEffect(() => {
     loadProducts();
   }, [loadProducts]);
+  useEffect(() => {
+    if (page === 'checkout' || page === 'profile') {
+      loadSavedAddress();
+    }
+  }, [page, loadSavedAddress]);
 
   useEffect(() => {
     if (page === 'orders') loadOrders();
@@ -224,12 +278,13 @@ export default function ConsumerDashboard() {
   }
 
   
+  
   async function placeOrder(event) {
     event.preventDefault();
 
     if (!cartItems.length) {
-        setError('Your basket is empty.');
-        return;
+      setError('Your basket is empty.');
+      return;
     }
 
     setBusy(true);
@@ -237,46 +292,131 @@ export default function ConsumerDashboard() {
     setNotice('');
 
     try {
-        const payload = {
+      
+      const savedAddress = await api('/api/consumer/address', {
+        method: 'PUT',
+        body: JSON.stringify(address)
+      });
+
+      setAddress({
+        delivery_address: savedAddress.delivery_address,
+        delivery_city: savedAddress.delivery_city,
+        postal_code: savedAddress.postal_code,
+        phone: savedAddress.phone
+      });
+
+      setAddressSaved(true);
+      setEditingAddress(false);
+
+      const payload = {
         client_order_key: crypto.randomUUID(),
-        ...address,
+        delivery_address: savedAddress.delivery_address,
+        delivery_city: savedAddress.delivery_city,
+        postal_code: savedAddress.postal_code,
+        phone: savedAddress.phone,
         payment_method: paymentMethod,
         items: cartItems.map(item => ({
-            lot_id: item.id,
-            quantity_kg: item.quantity
+          lot_id: item.id,
+          quantity_kg: item.quantity
         }))
-        };
+      };
 
-        if (paymentMethod === 'paypal') {
+
+      if (paymentMethod === 'paypal') {
         const result = await api('/api/paypal/create-order', {
-            method: 'POST',
-            body: JSON.stringify(payload)
+          method: 'POST',
+          body: JSON.stringify(payload)
         });
 
         if (!result.approval_url) {
-            throw new Error('PayPal approval URL missing.');
+          throw new Error('PayPal approval URL missing.');
         }
 
         window.location.assign(result.approval_url);
         return;
-        }
+      }
 
-        const order = await api('/api/consumer/orders', {
-        method: 'POST',
-        body: JSON.stringify(payload)
+      if (paymentMethod === 'razorpay') {
+        const result = await api('/api/razorpay/create-order', {
+          method: 'POST',
+          body: JSON.stringify(payload)
         });
 
-        setCart({});
-        setNotice(`Order #${order.id} placed. Payment is due on delivery.`);
-        setPage('orders');
-        await loadOrders();
+        if (!window.Razorpay) {
+          throw new Error('Razorpay Checkout script is not loaded.');
+        }
+
+        const options = {
+          key: result.key_id,
+          amount: result.amount,
+          currency: result.currency,
+          name: 'AgriDemand AI',
+          description: 'Fresh produce order',
+          order_id: result.razorpay_order_id,
+
+          handler: async function (response) {
+            setBusy(true);
+            try {
+              const verified = await api('/api/razorpay/verify-payment', {
+                method: 'POST',
+                body: JSON.stringify({
+                  razorpay_order_id: response.razorpay_order_id,
+                  razorpay_payment_id: response.razorpay_payment_id,
+                  razorpay_signature: response.razorpay_signature
+                })
+              });
+
+              if (verified.status !== 'completed') {
+                throw new Error('Payment verification is pending.');
+              }
+
+              setCart({});
+              setNotice(`Razorpay payment successful. Order #${verified.order_id} placed.`);
+              setPage('orders');
+              await loadOrders();
+            } catch (err) {
+              setError(err.message);
+            } finally {
+              setBusy(false);
+            }
+          },
+
+          modal: {
+            ondismiss: () => setBusy(false)
+          },
+
+          theme: {
+            color: '#16a34a'
+          }
+        };
+
+        const checkout = new window.Razorpay(options);
+        checkout.on('payment.failed', response => {
+          setError(response.error?.description || 'Payment failed. Please retry.');
+          setBusy(false);
+        });
+
+        checkout.open();
+        return;
+      }
+
+      const order = await api('/api/consumer/orders', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+
+      setCart({});
+      setNotice(`Order #${order.id} placed. Payment is due on delivery.`);
+      setPage('orders');
+      await loadOrders();
 
     } catch (err) {
-        setError(err.message);
+      setError(err.message);
     } finally {
-        setBusy(false);
+      setBusy(false);
     }
-    }
+  }
+
 
   const navItems = [
     ['shop', 'Discover produce', ShoppingBasket],
@@ -531,6 +671,23 @@ export default function ConsumerDashboard() {
 
               <div className="cp-columns">
                 <form className="cp-form" onSubmit={placeOrder}>
+                  {addressSaved && !editingAddress && (
+                    <div className="cp-profile">
+                      <section>
+                        <small>SAVED DELIVERY ADDRESS</small>
+                        <h3>{address.delivery_address}</h3>
+                        <p>{address.delivery_city} - {address.postal_code}</p>
+                        <p>{address.phone}</p>
+                      </section>
+
+                      <button
+                        type="button"
+                        onClick={() => setEditingAddress(true)}
+                      >
+                        Edit Address
+                      </button>
+                    </div>
+                  )}
                   <label>Delivery address
                     <input required minLength="5" maxLength="250"
                       value={address.delivery_address}
@@ -583,6 +740,19 @@ export default function ConsumerDashboard() {
                         <small>Secure online checkout (test mode).</small>
                         </span>
                     </label>
+                    <label>
+                      <input
+                        type="radio"
+                        name="paymentMethod"
+                        value="razorpay"
+                        checked={paymentMethod === 'razorpay'}
+                        onChange={() => setPaymentMethod('razorpay')}
+                      />
+                      <span>
+                        <b>UPI / Debit Card / Credit Card</b>
+                        <small>Secure Razorpay checkout (Test Mode).</small>
+                      </span>
+                    </label>
                     </div>
                   <button className="cp-primary" disabled={busy || !cartItems.length}>
                     {busy
@@ -609,10 +779,15 @@ export default function ConsumerDashboard() {
             </section>
           )}
 
+          
           {page === 'orders' && (
             <section className="cp-section">
               <div className="cp-heading">
-                <div><small>YOUR PURCHASES</small><h2>Order history</h2></div>
+                <div>
+                  <small>YOUR PURCHASES</small>
+                  <h2>Order history</h2>
+                  <p>Track and manage your purchases</p>
+                </div>
                 <button className="cp-refresh" onClick={loadOrders} disabled={busy}>
                   <RefreshCw size={15} /> Refresh
                 </button>
@@ -622,34 +797,157 @@ export default function ConsumerDashboard() {
                 <div className="cp-empty">Loading orders...</div>
               ) : orders.length ? (
                 <div className="cp-orders">
-                  {orders.map(order => (
-                    <article key={order.id}>
-                      <header>
-                        <div><small>ORDER #{order.id}</small><h3>{order.items.map(item => item.crop).join(', ')}</h3></div>
-                        <b className="cp-status">{order.status.replaceAll('_', ' ')}</b>
-                      </header>
-                      <div className="cp-order-meta">
-                        <span><Clock3 size={14} /> {new Date(order.created_at).toLocaleString('en-IN')}</span>
-                        <b>{money(order.total_amount)}</b>
-                      </div>
-                      {order.items.map(item => (
-                        <p key={item.id}>
-                          {emoji(item.crop)} {item.crop} · {item.quantity_kg} kg
-                          <span>{item.farmer_name} · {money(item.subtotal)}</span>
-                        </p>
-                      ))}
-                      <footer><MapPin size={14} /> {order.delivery_address}, {order.delivery_city} {order.postal_code}</footer>
-                    </article>
-                  ))}
+                  
+                    
+                  {orders.map(order => {
+                    const statusProgress = {
+                      placed: 0,
+                      accepted: 1,
+                      preparing: 2,
+                      dispatched: 3,
+                      delivered: 4,
+                    };
+
+                    const itemStatuses = (order.items || []).map(item =>
+                      String(item.status || 'placed').toLowerCase()
+                    );
+
+                    // Show the least advanced item status until every item is complete.
+                    const status = itemStatuses.length
+                      ? itemStatuses.reduce((current, next) =>
+                          (statusProgress[next] ?? 0) < (statusProgress[current] ?? 0)
+                            ? next
+                            : current
+                        )
+                      : 'placed';
+
+                    const steps = [
+                      { key: 'placed', label: 'Order placed', detail: 'Your order has been successfully created.' },
+                      { key: 'accepted', label: 'Order accepted', detail: 'The farmer has accepted your order.' },
+                      { key: 'preparing', label: 'Preparing order', detail: 'Your produce is being prepared.' },
+                      { key: 'dispatched', label: 'Out for delivery', detail: 'Your order is on its way.' },
+                      { key: 'delivered', label: 'Delivered', detail: 'Your order has been delivered.' }
+                    ];
+
+                    const statusIndex = statusProgress[status] ?? 0;
+                    const cancelled = status === 'cancelled';
+                    const expanded = trackingOrderId === order.id;
+
+                    return (
+
+                      <article className="cp-order-card" key={order.id}>
+                        <header className="cp-order-header">
+                          <div>
+                            <small>ORDER #{order.id}</small>
+                            <h3>{order.items.map(item => item.crop).join(', ')}</h3>
+                          </div>
+                          <b className={`cp-status ${cancelled ? 'is-cancelled' : ''}`}>
+                            {status.replaceAll('_', ' ')}
+                          </b>
+                        </header>
+
+                        <div className="cp-order-meta">
+                          <span>
+                            <Clock3 size={14} />
+                            {new Date(order.created_at).toLocaleString('en-IN')}
+                          </span>
+                          <b>{money(order.total_amount)}</b>
+                        </div>
+
+                        <div className="cp-order-items">
+                          {order.items.map(item => (
+                            <p key={item.id}>
+                              <span>{emoji(item.crop)} {item.crop} · {item.quantity_kg} kg</span>
+                              <span>{item.farmer_name} · {money(item.subtotal)}</span>
+                            </p>
+                          ))}
+                        </div>
+
+                        <footer className="cp-order-address">
+                          <MapPin size={14} />
+                          {order.delivery_address}, {order.delivery_city} {order.postal_code}
+                        </footer>
+
+                        <button
+                          type="button"
+                          className="cp-track-button"
+                          onClick={() => setTrackingOrderId(expanded ? null : order.id)}
+                          aria-expanded={expanded}
+                        >
+                          <Package size={16} />
+                          {expanded ? 'Hide tracking' : 'Track order'}
+                          <ChevronRight
+                            size={16}
+                            className={expanded ? 'cp-track-chevron open' : 'cp-track-chevron'}
+                          />
+                        </button>
+
+                        {expanded && (
+                          <div className="cp-tracking-panel">
+                            <div className="cp-tracking-heading">
+                              <div>
+                                <small>ORDER TRACKING</small>
+                                <h3>Order #{order.id} progress</h3>
+                              </div>
+                              <span>{cancelled ? 'Cancelled' : `${statusIndex + 1} of 5 steps`}</span>
+                            </div>
+
+                            {cancelled ? (
+                              <div className="cp-tracking-cancelled">
+                                <X size={18} />
+                                This order is marked as cancelled.
+                              </div>
+                            ) : (
+                              <div className="cp-timeline">
+                                {steps.map((step, index) => {
+                                  const completed = index <= statusIndex;
+                                  const current = index === statusIndex;
+
+                                  return (
+                                    <div
+                                      className={`cp-timeline-step ${completed ? 'completed' : ''} ${current ? 'current' : ''}`}
+                                      key={step.key}
+                                    >
+                                      <div className="cp-timeline-marker">
+                                        {completed ? <CircleCheck size={17} /> : <span>{index + 1}</span>}
+                                      </div>
+                                      <div className="cp-timeline-content">
+                                        <b>{step.label}</b>
+                                        <p>{step.detail}</p>
+                                        {current && (
+                                          <small>
+                                            {status === 'placed'
+                                              ? 'Your order is placed. Waiting for the next status update.'
+                                              : 'Current status from your order record.'}
+                                          </small>
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+
+                            <div className="cp-tracking-note">
+                              <ShieldCheck size={15} />
+                              Tracking information is based on the latest status recorded by the platform.
+                            </div>
+                          </div>
+                        )}
+                      </article>
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="cp-empty">
-                  <Package /><h3>No orders yet</h3>
+                  <Package />
+                  <h3>No orders yet</h3>
                   <button onClick={() => navigate('shop')}>Explore marketplace</button>
                 </div>
               )}
             </section>
           )}
+
 
           {page === 'profile' && (
             <section className="cp-section">
@@ -657,6 +955,62 @@ export default function ConsumerDashboard() {
               <div className="cp-profile">
                 <div>{(user?.full_name || 'C')[0].toUpperCase()}</div>
                 <section><small>CONSUMER ACCOUNT</small><h3>{user?.full_name}</h3><p>{user?.email}</p></section>
+              </div>
+              <div className="cp-form">
+                <h3>Delivery Address</h3>
+
+                {addressSaved && !editingAddress ? (
+                  <>
+                    <p>{address.delivery_address}</p>
+                    <p>{address.delivery_city} - {address.postal_code}</p>
+                    <p>{address.phone}</p>
+
+                    <button
+                      type="button"
+                      onClick={() => setEditingAddress(true)}
+                    >
+                      Edit Address
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <label>Delivery Address
+                      <input
+                        value={address.delivery_address}
+                        onChange={e => setAddress({...address, delivery_address: e.target.value})}
+                      />
+                    </label>
+
+                    <label>City
+                      <input
+                        value={address.delivery_city}
+                        onChange={e => setAddress({...address, delivery_city: e.target.value})}
+                      />
+                    </label>
+
+                    <label>Postal Code
+                      <input
+                        value={address.postal_code}
+                        onChange={e => setAddress({...address, postal_code: e.target.value})}
+                      />
+                    </label>
+
+                    <label>Phone
+                      <input
+                        value={address.phone}
+                        onChange={e => setAddress({...address, phone: e.target.value})}
+                      />
+                    </label>
+
+                    <button
+                      type="button"
+                      disabled={addressLoading}
+                      onClick={saveAddress}
+                    >
+                      {addressLoading ? 'Saving...' : 'Save Address'}
+                    </button>
+                  </>
+                )}
               </div>
               <button className="cp-signout" onClick={logout}><LogOut size={16} /> Sign out</button>
             </section>

@@ -1043,3 +1043,138 @@
   .bb-results-title { flex-direction: column; }
   .bb-order-details { grid-template-columns: 1fr 1fr; }
 }
+
+
+
+/* Bulk Buyer - Consumer-style order tracking timeline */
+.bb-item-tracking {
+  width: 100%;
+  margin-top: 18px;
+}
+
+.bb-tracking-card {
+  background: #f4f9f5;
+  border: 1px solid #dcebe0;
+  border-radius: 14px;
+  padding: 20px;
+}
+
+.bb-tracking-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.bb-tracking-heading > div {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.bb-tracking-heading > div > span {
+  color: #07845a;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+}
+
+.bb-tracking-heading > div > strong {
+  color: #102b20;
+  font-size: 16px;
+}
+
+.bb-tracking-heading > small {
+  color: #08794e;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.bb-tracking-timeline {
+  display: flex;
+  flex-direction: column;
+}
+
+.bb-timeline-step {
+  position: relative;
+  display: flex;
+  gap: 15px;
+  min-height: 76px;
+}
+
+.bb-timeline-step:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 14px;
+  top: 30px;
+  bottom: 0;
+  width: 2px;
+  background: #d5e2d9;
+}
+
+.bb-timeline-step.is-complete:not(:last-child)::before {
+  background: #218b55;
+}
+
+.bb-timeline-marker {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #d5e2d9;
+  border-radius: 50%;
+  background: #fff;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.bb-timeline-step.is-complete .bb-timeline-marker {
+  background: #218b55;
+  border-color: #218b55;
+  box-shadow: 0 0 0 5px #218b551a;
+}
+
+.bb-timeline-content {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 3px 0 18px;
+}
+
+.bb-timeline-content > strong {
+  color: #173629;
+  font-size: 13px;
+}
+
+.bb-timeline-content > p {
+  margin: 0;
+  color: #71877a;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.bb-timeline-content > small {
+  color: #07845a;
+  font-size: 10px;
+}
+
+@media (max-width: 600px) {
+  .bb-tracking-card {
+    padding: 15px;
+  }
+
+  .bb-tracking-heading > div > strong {
+    font-size: 14px;
+  }
+
+  .bb-timeline-step {
+    min-height: 82px;
+  }
+}

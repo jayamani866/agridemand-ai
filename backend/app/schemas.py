@@ -79,6 +79,18 @@ class OrderItemOut(BaseModel):
     quantity_kg: float
     price_per_kg: float
     subtotal: float
+    status: str
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BulkOrderStatusHistoryOut(BaseModel):
+    id: int
+    status: str
+    updated_by_user_id: int
+    note: str | None = None
+    created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -89,27 +101,21 @@ class OrderOut(BaseModel):
     total_amount: float
     currency: str
     status: str
+    payment_method: str
+    payment_status: str
+    payment_reference: str | None = None
+    payment_order_id: str | None = None
+    paid_at: datetime | None = None
     created_at: datetime
     items: list[OrderItemOut]
 
     model_config = ConfigDict(from_attributes=True)
-
-class OrderOut(BaseModel):
-    id: int
-    request_id: int
-    total_amount: float
-    currency: str
-    status: str
-    created_at: datetime
-    items: list[OrderItemOut]
-
-    model_config = ConfigDict(from_attributes=True)
-
 
 
 class OrderItemDetailOut(OrderItemOut):
     farmer_name: str
     farmer_location: str
+    status_history: list[BulkOrderStatusHistoryOut] = Field(default_factory=list)
 
 
 class OrderListOut(OrderOut):
@@ -118,4 +124,3 @@ class OrderListOut(OrderOut):
     requested_quantity_kg: float
     delivery_location: str
     items: list[OrderItemDetailOut]
-

@@ -13,18 +13,67 @@ from app.models import (
     User,
     RetailOrder,
     RetailOrderItem,
+    ConsumerAddress,
 )
 from app.consumer_schemas import (
     ConsumerProductOut,
     ConsumerCheckoutCreate,
     ConsumerOrderOut,
+    ConsumerAddressIn,
+    ConsumerAddressOut,
 )
-
 router = APIRouter(
     prefix="/api/consumer",
     tags=["Consumer"]
 )
 
+def calculate_buyer_fee(subtotal: Decimal) -> Decimal:
+    subtotal = subtotal.quantize(Decimal("0.01"))
+
+    if subtotal <= Decimal("500.00"):
+        return Decimal("0.00")
+    elif subtotal <= Decimal("1000.00"):
+        return Decimal("2.50")
+    else:
+        return Decimal("5.00")
+
+@router.get("/address", response_model=ConsumerAddressOut | None)
+def get_consumer_address(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("consumer")),
+):
+    return db.scalar(
+        select(ConsumerAddress).where(
+            ConsumerAddress.user_id == current_user.id
+        )
+    )
+
+
+@router.put("/address", response_model=ConsumerAddressOut)
+def save_consumer_address(
+    payload: ConsumerAddressIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("consumer")),
+):
+    address = db.scalar(
+        select(ConsumerAddress).where(
+            ConsumerAddress.user_id == current_user.id
+        )
+    )
+
+    if address is None:
+        address = ConsumerAddress(
+            user_id=current_user.id,
+            **payload.model_dump(),
+        )
+        db.add(address)
+    else:
+        for key, value in payload.model_dump().items():
+            setattr(address, key, value)
+
+    db.commit()
+    db.refresh(address)
+    return address
 
 @router.get("/products", response_model=list[ConsumerProductOut])
 def get_consumer_products(
@@ -63,6 +112,7 @@ def _create_consumer_order(
     payload: ConsumerCheckoutCreate,
     db: Session,
     current_user: User,
+    buyer_fee: Decimal = Decimal("0.00"),
 ):
     
     # Return the previous order if this checkout was already submitted.
@@ -152,8 +202,8 @@ def _create_consumer_order(
         order = RetailOrder(
             user_id=current_user.id,
             client_order_key=payload.client_order_key,
-            total_amount=total,
-            currency="USD",
+            total_amount=total + buyer_fee,
+            currency="INR",
             status="placed",
             delivery_address=payload.delivery_address,
             delivery_city=payload.delivery_city,

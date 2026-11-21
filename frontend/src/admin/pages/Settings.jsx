@@ -85,7 +85,7 @@ function Settings() {
     setHealthMessage('Checking backend connection...');
 
     try {
-      const response = await fetch('http://127.0.0.1:8001/health');
+      const response = await fetch('http://127.0.0.1:8002/health');
       if (!response.ok) {
         throw new Error(`Backend returned HTTP ${response.status}`);
       }
@@ -111,7 +111,7 @@ function Settings() {
 
     const fetchBackendStatus = async () => {
         try {
-        const response = await fetch('http://127.0.0.1:8001/health');
+        const response = await fetch('http://127.0.0.1:8002/health');
 
         if (!response.ok) {
             throw new Error(`Backend returned HTTP ${response.status}`);
@@ -439,7 +439,7 @@ function Settings() {
               <div className="settings-system-icon"><Database size={18} /></div>
               <div className="settings-system-info">
                 <strong>Backend API</strong>
-                <p>http://127.0.0.1:8001/health</p>
+                <p>http://127.0.0.1:8002/health</p>
               </div>
               <span className={`settings-status-pill ${health}`}>
                 <i />

@@ -27,11 +27,24 @@ class ConsumerCheckoutCreate(BaseModel):
     delivery_city: str = Field(min_length=2, max_length=100)
     postal_code: str = Field(pattern=r"^[0-9]{5,10}$")
     phone: str = Field(pattern=r"^[0-9+ -]{8,16}$")
-    payment_method: Literal["pay_on_delivery", "paypal"] = "pay_on_delivery"
+    payment_method: Literal[
+        "pay_on_delivery",
+        "paypal",
+        "razorpay"
+    ] = "pay_on_delivery"
     items: list[ConsumerOrderItemCreate] = Field(
         min_length=1,
         max_length=30
     )
+
+
+
+class ConsumerOrderStatusHistoryOut(BaseModel):
+    status: str
+    note: str | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
 
 
 class ConsumerOrderItemOut(BaseModel):
@@ -43,7 +56,11 @@ class ConsumerOrderItemOut(BaseModel):
     quantity_kg: float
     price_per_kg: float
     subtotal: float
+    status: str
+    updated_at: datetime
+    status_history: list[ConsumerOrderStatusHistoryOut] = []
 
+    model_config = {"from_attributes": True}
 
 class ConsumerOrderOut(BaseModel):
     id: int
@@ -58,3 +75,14 @@ class ConsumerOrderOut(BaseModel):
     payment_method: str
     created_at: datetime
     items: list[ConsumerOrderItemOut]
+
+
+class ConsumerAddressIn(BaseModel):
+    delivery_address: str = Field(min_length=5, max_length=250)
+    delivery_city: str = Field(min_length=2, max_length=100)
+    postal_code: str = Field(pattern=r"^[0-9]{5,10}$")
+    phone: str = Field(pattern=r"^[0-9+ -]{8,16}$")
+
+
+class ConsumerAddressOut(ConsumerAddressIn):
+    id: int

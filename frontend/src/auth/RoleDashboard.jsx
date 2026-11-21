@@ -2,8 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from './AuthContext';
 import BulkBuyerDashboard from './BulkBuyerDashboard';
-const API = 'http://127.0.0.1:8001';
-
+const API = 'http://127.0.0.1:8002';
 const CROPS = [
   'tomato', 'onion', 'coconut', 'banana', 'turmeric',
   'rice', 'groundnut', 'maize', 'millet', 'ragi',
@@ -20,9 +19,11 @@ const CROPS = [
 const NAV = [
   { id: 'overview', icon: '◫', label: 'Overview', group: 'WORKSPACE' },
   { id: 'inventory', icon: '▤', label: 'My Inventory', group: 'WORKSPACE' },
+  { id: 'orders', icon: '📦', label: 'My Orders', group: 'WORKSPACE' },
   { id: 'demand', icon: '◈', label: 'Buyer Demand', group: 'WORKSPACE' },
   { id: 'insights', icon: '⌁', label: 'Demand Insights', group: 'ANALYTICS' },
   { id: 'profile', icon: '◎', label: 'Farm Profile', group: 'ACCOUNT' },
+
 ];
 
 const money = (value) =>
@@ -69,6 +70,10 @@ export default function RoleDashboard() {
   const [profile, setProfile] = useState(null);
   const [lots, setLots] = useState([]);
   const [requests, setRequests] = useState([]);
+  const [retailOrders, setRetailOrders] = useState([]);
+  const [bulkOrders, setBulkOrders] = useState([]);
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  const [updatingOrderId, setUpdatingOrderId] = useState(null);
   const [activePage, setActivePage] = useState('overview');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -114,6 +119,81 @@ export default function RoleDashboard() {
     }
     return data;
   }, [token]);
+
+  const loadRetailOrders = useCallback(async () => {
+    setOrdersLoading(true);
+
+    try {
+      const data = await request('/api/farmers/me/retail-orders');
+      setRetailOrders(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setError(`Could not load orders: ${err.message}`);
+    } finally {
+      setOrdersLoading(false);
+    }
+  }, [request]);
+
+  const loadBulkOrders = useCallback(async () => {
+    try {
+      const data = await request('/api/farmers/me/bulk-orders');
+      setBulkOrders(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setError(`Could not load bulk orders: ${err.message}`);
+    }
+  }, [request]);
+
+  useEffect(() => {
+    if (user?.role === 'farmer' && activePage === 'orders') {
+      loadRetailOrders();
+      loadBulkOrders();
+    }
+  }, [user, activePage, loadRetailOrders, loadBulkOrders]);
+  const updateRetailOrderStatus = async (itemId, status) => {
+    setUpdatingOrderId(itemId);
+    setError('');
+    setToast('');
+
+    try {
+      await request(`/api/farmers/me/retail-orders/${itemId}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status }),
+      });
+
+      setToast(`Order #${itemId} updated to ${status}.`);
+      await loadRetailOrders();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setUpdatingOrderId(null);
+    }
+  };
+
+  const updateBulkOrderStatus = async (itemId, status) => {
+    setUpdatingOrderId(itemId);
+    setError('');
+    setToast('');
+
+    try {
+      await request(`/api/farmers/me/bulk-orders/${itemId}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status }),
+      });
+
+      setToast(`Bulk order #${itemId} updated to ${status}.`);
+      await loadBulkOrders();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setUpdatingOrderId(null);
+    }
+  };
+
+  const nextOrderStatus = {
+    placed: 'accepted',
+    accepted: 'preparing',
+    preparing: 'dispatched',
+    dispatched: 'delivered',
+  };
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
@@ -291,6 +371,7 @@ export default function RoleDashboard() {
   }
 
   const pageTitle = {
+    orders: 'My Orders',
     overview: 'Farm overview',
     inventory: 'My inventory',
     demand: 'Buyer demand',
@@ -299,6 +380,7 @@ export default function RoleDashboard() {
   }[activePage];
 
   const pageSubtitle = {
+    orders: 'Manage customer orders and update delivery progress.',
     overview: 'Your farm at a glance. Make better decisions with demand-led insights.',
     inventory: 'Manage the produce you have available for buyers.',
     demand: 'Explore procurement requirements submitted by buyers.',
@@ -669,35 +751,218 @@ export default function RoleDashboard() {
                 </section>
               )}
 
-              {activePage === 'insights' && (
-                <>
-                  <div className="ag-insight-intro">
-                    <span>✦</span>
-                    <div><strong>Platform demand snapshot</strong><p>These insights are calculated from buyer requests currently available in the platform database. They are not external market forecasts.</p></div>
+              
+              {activePage === 'orders' && (
+                <section className="ag-panel">
+                  <div className="ag-panel-heading">
+                    <div>
+                      <h3>Customer orders</h3>
+                      <p>Track and update your assigned order items.</p>
+                    </div>
+                    <button
+                      className="ag-btn ag-btn-primary"
+                      onClick={loadRetailOrders}
+                      disabled={ordersLoading}
+                    >
+                      {ordersLoading ? 'Refreshing...' : '↻ Refresh'}
+                    </button>
                   </div>
-                  <div className="ag-stats-grid ag-stats-compact">
-                    <StatCard label="Buyer requests" value={requests.length} note="Current platform requests" icon="◈" accent="blue" />
-                    <StatCard label="Requested quantity" value={`${number(requests.reduce((s, r) => s + Number(r.quantity_kg || 0), 0))} kg`} note="Total quantity requested" icon="▤" accent="green" />
-                    <StatCard label="Crops in demand" value={demandByCrop.length} note="Unique requested crop types" icon="✿" />
+
+                  {ordersLoading ? (
+                    <p>Loading orders...</p>
+                  ) : retailOrders.length === 0 ? (
+                    <EmptyState
+                      icon="📦"
+                      title="No orders assigned yet"
+                      description="Customer orders containing your produce will appear here."
+                    />
+                  ) : (
+                    <div className="ag-demand-grid">
+                      {retailOrders.map((order) => {
+                        const nextStatus = nextOrderStatus[order.status];
+
+                        return (
+                          <article className="ag-request-card" key={order.item_id}>
+                            <div className="ag-request-top">
+                              <span className="ag-request-tag">
+                                ORDER #{order.order_id}
+                              </span>
+                              <span className="ag-grade">
+                                {order.status?.toUpperCase()}
+                              </span>
+                            </div>
+
+                            <h3>{order.crop}</h3>
+
+                            <div className="ag-request-quantity">
+                              {number(order.quantity_kg)}
+                              <small> kg ordered</small>
+                            </div>
+
+                            <div className="ag-request-details">
+                              <div>
+                                <span>Price / kg</span>
+                                <strong>{money(order.price_per_kg)}</strong>
+                              </div>
+                              <div>
+                                <span>Subtotal</span>
+                                <strong>{money(order.subtotal)}</strong>
+                              </div>
+                              <div>
+                                <span>Last updated</span>
+                                <strong>
+                                  {order.updated_at
+                                    ? new Date(order.updated_at).toLocaleString()
+                                    : '—'}
+                                </strong>
+                              </div>
+                            </div>
+
+                            <div className="ag-note">
+                              <strong>Tracking history</strong>
+                              {order.history?.length ? (
+                                order.history.map((entry, index) => (
+                                  <div key={`${entry.status}-${index}`}>
+                                    ✓ {entry.status}
+                                    {' — '}
+                                    {new Date(entry.created_at).toLocaleString()}
+                                    {entry.note ? ` (${entry.note})` : ''}
+                                  </div>
+                                ))
+                              ) : (
+                                <p>No status updates recorded yet.</p>
+                              )}
+                            </div>
+
+                            {nextStatus && (
+                              <button
+                                className="ag-btn ag-btn-primary ag-btn-wide"
+                                disabled={updatingOrderId === order.item_id}
+                                onClick={() =>
+                                  updateRetailOrderStatus(order.item_id, nextStatus)
+                                }
+                              >
+                                {updatingOrderId === order.item_id
+                                  ? 'Updating...'
+                                  : `Move to ${nextStatus}`}
+                              </button>
+                            )}
+
+                            {order.status === 'delivered' && (
+                              <div className="ag-profile-status">
+                                ✓ Order delivered
+                              </div>
+                            )}
+                          </article>
+                        );
+                      })}
+                    </div>
+                  )}
+
+
+                  <div className="ag-panel-heading" style={{ marginTop: 24 }}>
+                    <div>
+                      <h3>Bulk procurement orders</h3>
+                      <p>Manage orders received from bulk buyers.</p>
+                    </div>
+                    <button
+                      className="ag-btn ag-btn-primary"
+                      onClick={loadBulkOrders}
+                    >
+                      ↻ Refresh bulk orders
+                    </button>
                   </div>
-                  <section className="ag-panel">
-                    <div className="ag-panel-heading"><div><h3>Demand by crop</h3><p>Aggregated quantities from buyer requests.</p></div><span className="ag-panel-icon">⌁</span></div>
-                    {demandByCrop.length === 0 ? (
-                      <EmptyState icon="⌁" title="Demand data is not available yet" description="Crop demand analytics will appear after buyers submit procurement requests." />
-                    ) : (
-                      <div className="ag-insight-bars">
-                        {demandByCrop.map(([crop, quantity], index) => (
-                          <div className="ag-insight-row" key={crop}>
-                            <div className="ag-insight-label"><strong>{crop}</strong><span>{number(quantity)} kg</span></div>
-                            <div className="ag-progress ag-progress-large"><i style={{ width: `${Math.max(3, quantity / demandByCrop[0][1] * 100)}%` }} /></div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </section>
-                  <div className="ag-note">No live mandi prices, price predictions or external demand forecasts are connected in this version.</div>
-                </>
+
+                  {bulkOrders.length === 0 ? (
+                    <p>No bulk orders assigned yet.</p>
+                  ) : (
+                    <div className="ag-demand-grid">
+                      {bulkOrders.map((order) => {
+                        const nextStatus = {
+                          pending: 'accepted',
+                          accepted: 'preparing',
+                          preparing: 'dispatched',
+                          dispatched: 'delivered',
+                        }[order.status];
+
+                        return (
+                          <article className="ag-request-card" key={`bulk-${order.item_id}`}>
+                            <div className="ag-request-top">
+                              <span className="ag-request-tag">
+                                BULK ORDER #{order.order_id}
+                              </span>
+                              <span className="ag-grade">
+                                {order.status?.toUpperCase()}
+                              </span>
+                            </div>
+
+                            <h3>Order item #{order.item_id}</h3>
+
+                            <div className="ag-request-quantity">
+                              {number(order.quantity_kg)}
+                              <small> kg ordered</small>
+                            </div>
+
+                            <div className="ag-request-details">
+                              <div>
+                                <span>Price / kg</span>
+                                <strong>{money(order.price_per_kg)}</strong>
+                              </div>
+                              <div>
+                                <span>Subtotal</span>
+                                <strong>{money(order.subtotal)}</strong>
+                              </div>
+                              <div>
+                                <span>Payment</span>
+                                <strong>{order.payment_method?.toUpperCase() || 'NOT SELECTED'}</strong>
+                              </div>
+                            </div>
+
+                            <div className="ag-note">
+                              <strong>Tracking history</strong>
+                              {order.history?.length ? (
+                                order.history.map((entry, index) => (
+                                  <div key={`${entry.status}-${index}`}>
+                                    ✓ {entry.status}
+                                    {' — '}
+                                    {entry.created_at
+                                      ? new Date(entry.created_at).toLocaleString()
+                                      : ''}
+                                    {entry.note ? ` (${entry.note})` : ''}
+                                  </div>
+                                ))
+                              ) : (
+                                <p>No status updates recorded yet.</p>
+                              )}
+                            </div>
+
+                            {nextStatus && (
+                              <button
+                                className="ag-btn ag-btn-primary ag-btn-wide"
+                                disabled={updatingOrderId === order.item_id}
+                                onClick={() =>
+                                  updateBulkOrderStatus(order.item_id, nextStatus)
+                                }
+                              >
+                                {updatingOrderId === order.item_id
+                                  ? 'Updating...'
+                                  : `Move to ${nextStatus}`}
+                              </button>
+                            )}
+
+                            {order.status === 'delivered' && (
+                              <div className="ag-profile-status">
+                                ✓ Order delivered
+                              </div>
+                            )}
+                          </article>
+                        );
+                      })}
+                    </div>
+                  )}
+                </section>
               )}
+
 
               {activePage === 'profile' && (
                 <div className="ag-profile-layout">

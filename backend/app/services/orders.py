@@ -10,7 +10,11 @@ def quantity(value) -> Decimal:
     return Decimal(str(value)).quantize(
         Decimal("0.01"), rounding=ROUND_HALF_UP
     )
-def create_order_from_request(db: Session, request_id: int):
+def create_order_from_request(
+    db: Session,
+    request_id: int,
+    payment_method: str = "not_selected",
+):
     try:
         request = db.get(BuyerRequest, request_id)
         if request is None:
@@ -95,6 +99,8 @@ def create_order_from_request(db: Session, request_id: int):
             total_amount=Decimal("0.00"),
             currency="INR",
             status="pending_payment",
+            payment_method=payment_method,
+            payment_status="pending",
         )
         db.add(order)
         db.flush()
@@ -103,6 +109,7 @@ def create_order_from_request(db: Session, request_id: int):
             price = allocation["price"]
             subtotal = money(allocated * price)
             total += subtotal
+
             db.add(
                 OrderItem(
                     order_id=order.id,

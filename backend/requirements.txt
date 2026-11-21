@@ -7,3 +7,5 @@ python-dotenv
 httpx
 pwdlib[argon2]
 PyJWT
+razorpay==2.0.1
+psycopg2-binary==2.9.13

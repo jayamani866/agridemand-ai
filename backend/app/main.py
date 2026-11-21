@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 import re
+import os
 from app.consumer import router as consumer_router
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 from app.paypal import router as paypal_router
+from app.razorpay import router as razorpay_router
 
 from app.auth import router as auth_router, require_roles
 from app.models import Order, User, PendingPayPalPayment
@@ -14,7 +16,16 @@ from app.schemas import OrderOut, OrderListOut
 from app.services.orders import create_order_from_request
 
 from app.database import Base, engine, get_db, SessionLocal
-from app.models import Farmer, ProduceLot, BuyerRequest
+from app.models import (
+    Farmer,
+    ProduceLot,
+    BuyerRequest,
+    OrderItem,
+    BulkOrderStatusHistory,
+    RetailOrder,
+    RetailOrderItem,
+    OrderStatusHistory,
+)
 from app.schemas import (
     FarmerCreate,
     FarmerOnboarding,
@@ -123,12 +134,16 @@ def seed_demo_data(db: Session) -> None:
         raise
 
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
 
-    with SessionLocal() as db:
-        seed_demo_data(db)
+    app_env = os.getenv("APP_ENV", "production").strip().lower()
+
+    if app_env == "development":
+        with SessionLocal() as db:
+            seed_demo_data(db)
 
     yield
 
@@ -146,6 +161,7 @@ app = FastAPI(
 app.include_router(auth_router)
 app.include_router(consumer_router)
 app.include_router(paypal_router)
+app.include_router(razorpay_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -251,37 +267,20 @@ def get_farmers(db: Session = Depends(get_db)):
     ).all()
 
 
-@app.post(
-    "/api/farmers",
-    response_model=FarmerOut,
-    status_code=201,
-)
-def create_farmer(
-    payload: FarmerCreate,
-    db: Session = Depends(get_db),
-):
-    farmer = Farmer(**payload.model_dump())
 
-    try:
-        db.add(farmer)
-        db.commit()
-        db.refresh(farmer)
-
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(
-            status_code=409,
-            detail="A farmer with this phone number already exists.",
-        )
-
-    return farmer
 
 
 @app.get("/api/lots", response_model=list[LotOut])
 def get_lots(db: Session = Depends(get_db)):
     return db.scalars(
-        select(ProduceLot).order_by(ProduceLot.id)
+        select(ProduceLot)
+        .where(
+            ProduceLot.status == "available",
+            ProduceLot.available_kg > 0,
+        )
+        .order_by(ProduceLot.id)
     ).all()
+
 
 
 @app.post(
@@ -330,51 +329,6 @@ def create_lot(
         raise
 
     return lot
-
-
-@app.get(
-    "/api/requests",
-    response_model=list[BuyerRequestOut],
-)
-def get_requests(db: Session = Depends(get_db)):
-    return db.scalars(
-        select(BuyerRequest).order_by(BuyerRequest.id.desc())
-    ).all()
-
-
-@app.post(
-    "/api/requests",
-    response_model=BuyerRequestOut,
-    status_code=201,
-)
-def create_request(
-    payload: BuyerRequestCreate,
-    db: Session = Depends(get_db),
-):
-    crop = payload.crop.strip().lower()
-
-    if not re.fullmatch(r"[a-z][a-z -]{1,39}", crop):
-        raise HTTPException(
-            status_code=400,
-            detail="Enter a valid crop name (2-40 letters)."
-        )
-
-    request_data = payload.model_dump()
-    request_data["crop"] = crop
-
-    buyer_request = BuyerRequest(**request_data)
-
-    try:
-        db.add(buyer_request)
-        db.commit()
-        db.refresh(buyer_request)
-
-    except Exception:
-        db.rollback()
-        raise
-
-    return buyer_request
-
 
 
 @app.get(
@@ -467,6 +421,7 @@ def get_matches(
 )
 def create_order(
     request_id: int,
+    payment_method: str = "not_selected",
     current_user: User = Depends(require_roles("bulk_buyer")),
     db: Session = Depends(get_db),
 ):
@@ -492,9 +447,17 @@ def create_order(
             status_code=409,
             detail="An order already exists for this request.",
         )
-
+    if payment_method not in ("cod", "not_selected"):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid payment method.",
+        )
     try:
-        order = create_order_from_request(db, request_id)
+        order = create_order_from_request(
+        db,
+        request_id,
+        payment_method=payment_method,
+    )
         return order
 
     except ValueError as exc:
@@ -503,13 +466,13 @@ def create_order(
             detail=str(exc),
         )
 
-    except IntegrityError:
+    except IntegrityError as exc:
+        print("BULK ORDER DATABASE ERROR:", repr(exc.orig))
         db.rollback()
         raise HTTPException(
             status_code=409,
-            detail="Order already exists or inventory changed. Refresh and try again.",
+            detail="Order creation failed. Check backend terminal.",
         )
-
 
 @app.get(
     "/api/orders",
@@ -526,7 +489,11 @@ def get_orders(
             Order.request_id == BuyerRequest.id,
         )
         .where(BuyerRequest.user_id == current_user.id)
-        .options(selectinload(Order.items))
+        .options(
+            selectinload(Order.items).selectinload(
+                OrderItem.status_history
+            )
+        )
         .order_by(Order.id.desc())
     ).all()
 
@@ -573,9 +540,21 @@ def get_orders(
                 "farmer_id": item.farmer_id,
                 "quantity_kg": item.quantity_kg,
                 "price_per_kg": item.price_per_kg,
-                "subtotal": item.subtotal,
+                "subtotal": round(float(item.quantity_kg) * float(item.price_per_kg), 2),
+                "status": item.status,
+                "updated_at": item.updated_at,
                 "farmer_name": farmer.name,
                 "farmer_location": farmer.location,
+                "status_history": [
+                    {
+                        "id": history.id,
+                        "status": history.status,
+                        "updated_by_user_id": history.updated_by_user_id,
+                        "note": history.note,
+                        "created_at": history.created_at,
+                    }
+                    for history in item.status_history
+                ],
             })
 
         result.append({
@@ -584,6 +563,11 @@ def get_orders(
             "total_amount": order.total_amount,
             "currency": order.currency,
             "status": order.status,
+            "payment_method": order.payment_method,
+            "payment_status": order.payment_status,
+            "payment_reference": order.payment_reference,
+            "payment_order_id": order.payment_order_id,
+            "paid_at": order.paid_at,
             "created_at": order.created_at,
             "buyer_name": buyer_request.buyer_name,
             "crop": buyer_request.crop,
@@ -596,79 +580,240 @@ def get_orders(
 
 
 
+# ---------------- RETAIL ORDER TRACKING (FARMER) ----------------
 
-@app.get(
-    "/api/orders",
-    response_model=list[OrderListOut],
-)
-def get_orders(db: Session = Depends(get_db)):
-    rows = db.execute(
-        select(Order, BuyerRequest)
-        .join(
-            BuyerRequest,
-            Order.request_id == BuyerRequest.id,
-        )
-        .options(selectinload(Order.items))
-        .order_by(Order.id.desc())
+FARMER_ORDER_TRANSITIONS = {
+    "placed": "accepted",
+    "accepted": "preparing",
+    "preparing": "dispatched",
+    "dispatched": "delivered",
+}
+
+
+@app.get("/api/farmers/me/retail-orders")
+def get_my_retail_orders(
+    current_user: User = Depends(require_roles("farmer")),
+    db: Session = Depends(get_db),
+):
+    farmer = db.scalar(
+        select(Farmer).where(Farmer.user_id == current_user.id)
+    )
+
+    if farmer is None:
+        raise HTTPException(status_code=404, detail="Farmer profile not found")
+
+    items = db.scalars(
+        select(RetailOrderItem)
+        .where(RetailOrderItem.farmer_id == farmer.id)
+        .options(selectinload(RetailOrderItem.status_history))
+        .order_by(RetailOrderItem.id.desc())
     ).all()
 
-    if not rows:
-        return []
-
-    all_items = [
-        item
-        for order, buyer_request in rows
-        for item in order.items
+    return [
+        {
+            "item_id": item.id,
+            "order_id": item.order_id,
+            "crop": item.crop,
+            "quantity_kg": item.quantity_kg,
+            "price_per_kg": item.price_per_kg,
+            "subtotal": item.subtotal,
+            "status": item.status,
+            "updated_at": item.updated_at,
+            "history": [
+                {
+                    "status": history.status,
+                    "note": history.note,
+                    "created_at": history.created_at,
+                }
+                for history in item.status_history
+            ],
+        }
+        for item in items
     ]
 
-    farmer_ids = {item.farmer_id for item in all_items}
 
-    farmers = db.scalars(
-        select(Farmer).where(Farmer.id.in_(farmer_ids))
-    ).all() if farmer_ids else []
+@app.patch("/api/farmers/me/retail-orders/{item_id}/status")
+def update_my_retail_order_status(
+    item_id: int,
+    payload: dict,
+    current_user: User = Depends(require_roles("farmer")),
+    db: Session = Depends(get_db),
+):
+    farmer = db.scalar(
+        select(Farmer).where(Farmer.user_id == current_user.id)
+    )
 
-    farmer_by_id = {
-        farmer.id: farmer
-        for farmer in farmers
+    if farmer is None:
+        raise HTTPException(status_code=404, detail="Farmer profile not found")
+
+    item = db.scalar(
+        select(RetailOrderItem).where(
+            RetailOrderItem.id == item_id,
+            RetailOrderItem.farmer_id == farmer.id,
+        )
+    )
+
+    if item is None:
+        raise HTTPException(status_code=404, detail="Order item not found")
+
+    new_status = payload.get("status")
+    expected_status = FARMER_ORDER_TRANSITIONS.get(item.status)
+
+    if new_status != expected_status:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status transition. Current status: {item.status}. "
+                   f"Next allowed status: {expected_status}",
+        )
+
+    item.status = new_status
+
+    db.add(
+        OrderStatusHistory(
+            order_item_id=item.id,
+            status=new_status,
+            updated_by_user_id=current_user.id,
+            note=payload.get("note"),
+        )
+    )
+
+    db.commit()
+    db.refresh(item)
+
+    return {
+        "message": "Order status updated",
+        "item_id": item.id,
+        "status": item.status,
+        "updated_at": item.updated_at,
     }
 
-    result = []
 
-    for order, buyer_request in rows:
-        order_items = []
+# ---------------- BULK ORDER TRACKING (FARMER) ----------------
 
-        for item in order.items:
-            farmer = farmer_by_id.get(item.farmer_id)
+BULK_ORDER_TRANSITIONS = {
+    "pending": "accepted",
+    "accepted": "preparing",
+    "preparing": "dispatched",
+    "dispatched": "delivered",
+}
 
-            if farmer is None:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Farmer not found for order item {item.id}",
-                )
 
-            order_items.append({
-                "id": item.id,
-                "lot_id": item.lot_id,
-                "farmer_id": item.farmer_id,
-                "quantity_kg": item.quantity_kg,
-                "price_per_kg": item.price_per_kg,
-                "subtotal": item.subtotal,
-                "farmer_name": farmer.name,
-                "farmer_location": farmer.location,
-            })
+@app.get("/api/farmers/me/bulk-orders")
+def get_my_bulk_orders(
+    current_user: User = Depends(require_roles("farmer")),
+    db: Session = Depends(get_db),
+):
+    farmer = db.scalar(
+        select(Farmer).where(Farmer.user_id == current_user.id)
+    )
 
-        result.append({
-            "id": order.id,
-            "request_id": order.request_id,
-            "total_amount": order.total_amount,
-            "currency": order.currency,
-            "status": order.status,
-            "created_at": order.created_at,
-            "buyer_name": buyer_request.buyer_name,
-            "crop": buyer_request.crop,
-            "requested_quantity_kg": buyer_request.quantity_kg,
-            "delivery_location": buyer_request.delivery_location,
-            "items": order_items,
-        })
+    if farmer is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Farmer profile not found",
+        )
 
-    return result
+    items = db.scalars(
+        select(OrderItem)
+        .where(OrderItem.farmer_id == farmer.id)
+        .options(
+            selectinload(OrderItem.status_history),
+            selectinload(OrderItem.order),
+        )
+        .order_by(OrderItem.id.desc())
+    ).all()
+
+    return [
+        {
+            "item_id": item.id,
+            "order_id": item.order_id,
+            "request_id": item.order.request_id,
+            "quantity_kg": item.quantity_kg,
+            "price_per_kg": float(item.price_per_kg),
+            "subtotal": float(item.quantity_kg) * float(item.price_per_kg),
+            "status": item.status,
+            "updated_at": item.updated_at,
+            "payment_method": item.order.payment_method,
+            "payment_status": item.order.payment_status,
+            "history": [
+                {
+                    "status": history.status,
+                    "note": history.note,
+                    "created_at": history.created_at,
+                }
+                for history in item.status_history
+            ],
+        }
+        for item in items
+    ]
+
+
+@app.patch("/api/farmers/me/bulk-orders/{item_id}/status")
+def update_my_bulk_order_status(
+    item_id: int,
+    payload: dict,
+    current_user: User = Depends(require_roles("farmer")),
+    db: Session = Depends(get_db),
+):
+    farmer = db.scalar(
+        select(Farmer).where(Farmer.user_id == current_user.id)
+    )
+
+    if farmer is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Farmer profile not found",
+        )
+
+    item = db.scalar(
+        select(OrderItem).where(
+            OrderItem.id == item_id,
+            OrderItem.farmer_id == farmer.id,
+        )
+    )
+
+    if item is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Order item not found",
+        )
+
+    new_status = payload.get("status")
+    expected_status = BULK_ORDER_TRANSITIONS.get(item.status)
+
+    if new_status != expected_status:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Invalid status transition. Current status: {item.status}. "
+                f"Next allowed status: {expected_status}"
+            ),
+        )
+
+    item.status = new_status
+
+    db.add(
+        BulkOrderStatusHistory(
+            order_item_id=item.id,
+            status=new_status,
+            updated_by_user_id=current_user.id,
+            note=payload.get("note"),
+        )
+    )
+
+    try:
+        db.commit()
+        db.refresh(item)
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to update bulk order status",
+        )
+
+    return {
+        "message": "Bulk order status updated",
+        "item_id": item.id,
+        "status": item.status,
+        "updated_at": item.updated_at,
+    }

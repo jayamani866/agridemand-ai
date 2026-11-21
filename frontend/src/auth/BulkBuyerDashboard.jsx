@@ -11,8 +11,7 @@ import { useAuth } from './AuthContext';
 import { getMatchingResults } from '../shared/services/matchingApi';
 import './BulkBuyerDashboard.css';
 
-const API = 'http://127.0.0.1:8001';
-
+const API = 'http://127.0.0.1:8002';
 const CROPS = [
   'tomato', 'onion', 'coconut', 'banana',
   'turmeric', 'rice', 'groundnut'
@@ -47,6 +46,7 @@ export default function BulkBuyerDashboard() {
   const [saving, setSaving] = useState(false);
   const [matching, setMatching] = useState(false);
   const [creatingOrder, setCreatingOrder] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState('cod');
 
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -253,7 +253,7 @@ export default function BulkBuyerDashboard() {
 
     try {
       const order = await apiRequest(
-        `/api/requests/${selectedRequest.id}/orders`,
+        `/api/requests/${selectedRequest.id}/orders?payment_method=${paymentMethod}`,
         { method: 'POST' }
       );
 
@@ -725,6 +725,16 @@ export default function BulkBuyerDashboard() {
                         </small>
                       </div>
                     </div>
+                    <div className="bb-payment-selection">
+                      <label htmlFor="bulk-payment-method">Payment Method</label>
+                      <select
+                        id="bulk-payment-method"
+                        value={paymentMethod}
+                        onChange={(e) => setPaymentMethod(e.target.value)}
+                      >
+                        <option value="cod">Cash on Delivery (COD)</option>
+                      </select>
+                    </div>
 
                     <button
                       className="bb-primary-btn"
@@ -835,6 +845,11 @@ export default function BulkBuyerDashboard() {
                             <strong>{money(order.total_amount)}</strong>
                           </div>
                         </div>
+                        <div className="bb-payment-note">
+                          Payment Method: {pretty(order.payment_method || 'Not selected')}
+                          <br />
+                          Payment Status: {pretty(order.payment_status || 'Pending')}
+                        </div>
 
                         <div className="bb-order-farmers">
                           <div className="bb-section-heading">
@@ -857,7 +872,69 @@ export default function BulkBuyerDashboard() {
                                 <small>{money(item.price_per_kg)} / kg</small>
                               </div>
                               <strong className="bb-farmer-subtotal">{money(item.subtotal)}</strong>
+                              <div className="bb-item-tracking">
+                                {(() => {
+                                  const steps = [
+                                    { status: 'pending', title: 'Order placed', description: 'Your procurement order has been created.' },
+                                    { status: 'accepted', title: 'Order accepted', description: 'The farmer has accepted your order.' },
+                                    { status: 'preparing', title: 'Preparing order', description: 'Your produce is being prepared.' },
+                                    { status: 'dispatched', title: 'Out for delivery', description: 'Your order is on its way.' },
+                                    { status: 'delivered', title: 'Delivered', description: 'Your order has been delivered.' },
+                                  ];
+
+                                  const statuses = steps.map((step) => step.status);
+                                  const currentIndex = Math.max(
+                                    0,
+                                    statuses.indexOf(item.status || 'pending')
+                                  );
+
+                                  return (
+                                    <div className="bb-tracking-card">
+                                      <div className="bb-tracking-heading">
+                                        <div>
+                                          <span>ORDER TRACKING</span>
+                                          <strong>Order #{order.id} Progress</strong>
+                                        </div>
+                                        <small>{currentIndex + 1} of 5 steps</small>
+                                      </div>
+
+                                      <div className="bb-tracking-timeline">
+                                        {steps.map((step, index) => {
+                                          const completed = index <= currentIndex;
+                                          const event = (item.status_history || []).find(
+                                            (entry) => entry.status === step.status
+                                          );
+
+                                          return (
+                                            <div
+                                              key={step.status}
+                                              className={`bb-timeline-step ${completed ? 'is-complete' : ''}`}
+                                            >
+                                              <div className="bb-timeline-marker">
+                                                {completed ? '✓' : ''}
+                                              </div>
+
+                                              <div className="bb-timeline-content">
+                                                <strong>{step.title}</strong>
+                                                <p>{step.description}</p>
+                                                {event?.created_at && (
+                                                  <small>
+                                                    {new Date(event.created_at).toLocaleString('en-IN')}
+                                                  </small>
+                                                )}
+                                                {event?.note && <small>{event.note}</small>}
+                                              </div>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
+                              </div>
                             </div>
+
+                            
                           )) : (
                             <p className="bb-muted">No allocation details returned by the server.</p>
                           )}

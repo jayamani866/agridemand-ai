@@ -1,5 +1,6 @@
 from datetime import datetime
-from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String, Float, JSON
+from decimal import Decimal
+from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String, Float, JSON, Index
 from sqlalchemy import UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
@@ -113,24 +114,51 @@ class BuyerRequest(Base):
 
 
 
+
 class Order(Base):
     __tablename__ = "orders"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
     request_id: Mapped[int] = mapped_column(
         ForeignKey("buyer_requests.id"),
         unique=True,
         nullable=False
     )
+
     total_amount: Mapped[float] = mapped_column(
         Numeric(12, 2), nullable=False
     )
+
     currency: Mapped[str] = mapped_column(
         String(3), default="INR", nullable=False
     )
+
     status: Mapped[str] = mapped_column(
         String(30), default="pending_payment", nullable=False
     )
+
+    # Payment details for Bulk Buyer
+    payment_method: Mapped[str] = mapped_column(
+        String(30), default="not_selected", nullable=False
+    )
+
+    payment_status: Mapped[str] = mapped_column(
+        String(30), default="pending", nullable=False
+    )
+
+    payment_reference: Mapped[str | None] = mapped_column(
+        String(100), nullable=True
+    )
+
+    payment_order_id: Mapped[str | None] = mapped_column(
+        String(100), nullable=True
+    )
+
+    paid_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow
     )
@@ -141,28 +169,96 @@ class Order(Base):
     )
 
 
+
+
 class OrderItem(Base):
     __tablename__ = "order_items"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
     order_id: Mapped[int] = mapped_column(
         ForeignKey("orders.id"), nullable=False
     )
+
     lot_id: Mapped[int] = mapped_column(
         ForeignKey("produce_lots.id"), nullable=False
     )
+
     farmer_id: Mapped[int] = mapped_column(
-        ForeignKey("farmers.id"), nullable=False
+        ForeignKey("farmers.id"), nullable=False, index=True
     )
-    quantity_kg: Mapped[float] = mapped_column(Float, nullable=False)
+
+    quantity_kg: Mapped[float] = mapped_column(
+        Float, nullable=False
+    )
+
     price_per_kg: Mapped[float] = mapped_column(
         Numeric(10, 2), nullable=False
     )
-    subtotal: Mapped[float] = mapped_column(
+
+    subtotal: Mapped[Decimal] = mapped_column(
         Numeric(12, 2), nullable=False
     )
 
-    order: Mapped["Order"] = relationship(back_populates="items")
+    status: Mapped[str] = mapped_column(
+        String(30), default="pending", nullable=False, index=True
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False
+    )
+
+    order: Mapped["Order"] = relationship(
+        back_populates="items"
+    )
+
+    status_history: Mapped[list["BulkOrderStatusHistory"]] = relationship(
+        back_populates="order_item",
+        cascade="all, delete-orphan",
+        order_by="BulkOrderStatusHistory.created_at"
+    )
+
+
+
+class BulkOrderStatusHistory(Base):
+    __tablename__ = "bulk_order_status_history"
+
+    id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, index=True
+    )
+
+    order_item_id: Mapped[int] = mapped_column(
+        ForeignKey("order_items.id"),
+        nullable=False,
+        index=True
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(30), nullable=False
+    )
+
+    updated_by_user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"),
+        nullable=False,
+        index=True
+    )
+
+    note: Mapped[str | None] = mapped_column(
+        String(250), nullable=True
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        nullable=False
+    )
+
+    order_item: Mapped["OrderItem"] = relationship(
+        back_populates="status_history"
+    )
 
 
 class User(Base):
@@ -242,10 +338,11 @@ class RetailOrder(Base):
         cascade="all, delete-orphan"
     )
     __table_args__ = (
-        UniqueConstraint(
+        Index(
+            "uq_retail_order_user_client_key",
             "user_id",
             "client_order_key",
-            name="uq_retail_order_user_client_key"
+            unique=True,
         ),
     )
 
@@ -261,7 +358,7 @@ class RetailOrderItem(Base):
         ForeignKey("produce_lots.id"), nullable=False
     )
     farmer_id: Mapped[int] = mapped_column(
-        ForeignKey("farmers.id"), nullable=False
+        ForeignKey("farmers.id"), nullable=False, index=True
     )
     crop: Mapped[str] = mapped_column(String(50), nullable=False)
     farmer_name: Mapped[str] = mapped_column(String(120), nullable=False)
@@ -274,6 +371,151 @@ class RetailOrderItem(Base):
         Numeric(12, 2), nullable=False
     )
 
+    status: Mapped[str] = mapped_column(
+        String(30), default="placed", nullable=False, index=True
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
     order: Mapped["RetailOrder"] = relationship(
         back_populates="items"
+    )
+
+    status_history: Mapped[list["OrderStatusHistory"]] = relationship(
+        back_populates="order_item",
+        cascade="all, delete-orphan",
+        order_by="OrderStatusHistory.created_at",
+    )
+
+
+class OrderStatusHistory(Base):
+    __tablename__ = "retail_order_status_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+
+    order_item_id: Mapped[int] = mapped_column(
+        ForeignKey("retail_order_items.id"),
+        nullable=False,
+        index=True,
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(30), nullable=False
+    )
+
+    updated_by_user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"),
+        nullable=False,
+        index=True,
+    )
+
+    note: Mapped[str | None] = mapped_column(
+        String(250), nullable=True
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        nullable=False,
+    )
+
+    order_item: Mapped["RetailOrderItem"] = relationship(
+        back_populates="status_history"
+    )
+
+class PendingRazorpayPayment(Base):
+    __tablename__ = "pending_razorpay_payments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
+
+    client_order_key: Mapped[str] = mapped_column(
+        String(64), nullable=False
+    )
+
+    razorpay_order_id: Mapped[str] = mapped_column(
+        String(64), unique=True, nullable=False, index=True
+    )
+
+    razorpay_payment_id: Mapped[str | None] = mapped_column(
+        String(64), unique=True, nullable=True, index=True
+    )
+
+    amount_paise: Mapped[int] = mapped_column(
+        Integer, nullable=False
+    )
+
+    subtotal: Mapped[float] = mapped_column(
+        Numeric(12, 2), nullable=False
+    )
+
+    buyer_fee: Mapped[float] = mapped_column(
+        Numeric(12, 2), nullable=False
+    )
+
+    currency: Mapped[str] = mapped_column(
+        String(3), default="INR", nullable=False
+    )
+
+    checkout_data: Mapped[dict] = mapped_column(
+        JSON, nullable=False
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(30), default="created", nullable=False
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "client_order_key",
+            name="uq_razorpay_user_client_key",
+        ),
+    )
+
+
+
+
+class ConsumerAddress(Base):
+    __tablename__ = "consumer_addresses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+
+    delivery_address: Mapped[str] = mapped_column(
+        String(250), nullable=False
+    )
+    delivery_city: Mapped[str] = mapped_column(
+        String(100), nullable=False
+    )
+    postal_code: Mapped[str] = mapped_column(
+        String(10), nullable=False
+    )
+    phone: Mapped[str] = mapped_column(
+        String(16), nullable=False
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
     )
